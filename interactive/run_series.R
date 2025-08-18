@@ -7,7 +7,7 @@
 source("R/utils.R")
 
 # Base output folder
-root_out <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/interactive"
+root_out <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results_interactive"
 if (!dir.exists(root_out)) dir.create(root_out, recursive = TRUE)
 
 # Series-specific configuration (folders + volumes + Sep → TB mapping)
@@ -56,3 +56,4 @@ ggsave(file.path(s5$out_dir, "Q_vs_Volume_s5.tiff"), s5$plots$q_vol,   width = 9
 #   1) Put `utils.R` under R/ and `run_series.R` at project root (per layout above)
 #   2) Open R and setwd(".../25 Datenauswertung")
 #   3) source("run_series.R")
+

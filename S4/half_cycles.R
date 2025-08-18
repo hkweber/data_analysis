@@ -171,7 +171,7 @@ final_plot <- wrap_plots(row_plots, ncol = 1) +
 final_plot
 
 # --- Export paths & common settings ---
-out_dir <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/plots"
+out_dir <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results/plots/series_04/"
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 w <- 12; h <- 14
 
@@ -271,7 +271,7 @@ p_q_vs_cycle <- ggplot(qcd_long,
                        aes(x = factor(cycle), y = Q,
                            color = label, linetype = type,
                            group = interaction(label, type))) +
-  geom_line(linewidth = 0.7, alpha = 0.9) +
+  geom_point() +
   geom_point(size = 2) +
   scale_color_manual(values = dark2_vals, drop = FALSE) +
   scale_linetype_manual(values = c("solid", "dashed")) +

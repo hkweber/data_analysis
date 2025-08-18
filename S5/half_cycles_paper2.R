@@ -4,7 +4,7 @@ library(patchwork); library(RColorBrewer); library(readr); library(grid)
 
 w <- 12; h <- 14
 pdf_dev <- if (capabilities("cairo")) grDevices::cairo_pdf else grDevices::pdf
-out_dir_s5 <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/series5"  # set full path here
+out_dir_s5 <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results/plots/series_05"  # set full path here
 if (!dir.exists(out_dir_s5)) dir.create(out_dir_s5, recursive = TRUE)
 
 
@@ -149,32 +149,6 @@ final_plot_s5
 
 w <- 12  # inches
 h <- 14  # inches
-
-# # ---- PDF (vector; best for line/crisp text) ----
-# ggsave(
-#   filename = file.path(out_dir_s5, "U_vs_Q_Cycles_Charge_Discharge.pdf"),
-#   plot = final_plot_s5,
-#   width = w, height = h, units = "in", dpi = 300,
-#   device = cairo_pdf
-# )
-# 
-# # ---- PNG (raster; good for slides/web; high DPI) ----
-# ggsave(
-#   filename = file.path(out_dir_s5, "U_vs_Q_Cycles_Charge_Discharge.png"),
-#   plot = final_plot_s5,
-#   width = w, height = h, units = "in", dpi = 450,
-#   bg = "white"
-# )
-# 
-# # ---- TIFF (raster; common journal requirement; lossless LZW) ----
-# ggsave(
-#   filename = file.path(out_dir_s5, "U_vs_Q_Cycles_Charge_Discharge.tiff"),
-#   plot = final_plot_s5,
-#   width = w, height = h, units = "in", dpi = 600,
-#   device = "tiff",
-#   compression = "lzw",
-#   bg = "white"
-# )
 
 
 # Use same PDF device choice as above (pdf_dev already defined)
