@@ -1,0 +1,24 @@
+# R/RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Secrets / local config
+.Renviron
+
+# renv local paths (keep lock + settings + activate.R)
+renv/library/
+renv/staging/
+
+# Generated outputs
+cheat_sheets/
+**/*.png
+**/*.tiff
+**/*.pdf
+interactive/shiny/.Rhistory
+
+# Misc
+*.zip
+*.tmp
+*.log
