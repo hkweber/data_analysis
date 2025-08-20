@@ -5,7 +5,7 @@
 suppressPackageStartupMessages({
   library(shiny); library(shinyWidgets)
   library(dplyr); library(ggplot2); library(plotly)
-  library(scales); library(tidyr); library(stringr)
+  library(scales); library(tidyr); library(stringr); library(DT)
 })
 
 source(here::here("interactive", "R", "utils.R"))
@@ -113,7 +113,8 @@ ui <- fluidPage(
         tabPanel("CE vs Cycle", plotlyOutput("p_ce", height = "600px")),
         tabPanel("Q vs Cycle", plotlyOutput("p_q", height = "600px")),
         tabPanel("Q vs Volume", plotlyOutput("p_qv", height = "600px")),
-        tabPanel("U–Q", conditionalPanel("input.show_uq", plotlyOutput("p_uq", height = "700px")))
+        tabPanel("U–Q", conditionalPanel("input.show_uq", plotlyOutput("p_uq", height = "700px"))),
+        tabPanel("Table", DTOutput("tbl_ce", height = "620px"))
       )
     )
   )
@@ -372,6 +373,45 @@ server <- function(input, output, session){
     pl <- force_scattergl(pl)  # ensure scattergl traces
     pl %>% toWebGL()
   })
+  
+  # ── table ─────────────────────────────────────────────────────────────
+  output$tbl_ce <- DT::renderDT({
+    req(data_r(), input$cells)
+    
+    # Filter by current selections
+    df <- data_r()$ce %>%
+      mutate(cell_key = paste(series, label, sep = "||")) %>%
+      filter(cell_key %in% input$cells,
+             cycle %in% cycles_sel()) %>%
+      arrange(series, label, cycle) %>%
+      # keep a simple, tidy set of columns
+      transmute(
+        Series = series,
+        Cell   = label,
+        Cycle  = cycle,
+        Q_charge,
+        Q_discharge,
+        delta_Q_Ah,
+        CE
+      )
+    
+    DT::datatable(
+      df,
+      extensions = "Buttons",
+      rownames = FALSE,
+      filter   = "top",
+      options = list(
+        dom = "Bfrtip",
+        buttons = c("copy", "csv", "excel"),
+        pageLength = 50,
+        scrollX = TRUE
+      ),
+      class = "compact stripe"
+    ) |>
+      DT::formatRound(c("Q_charge", "Q_discharge", "delta_Q_Ah"), 3) |>
+      DT::formatPercentage("CE", 1)
+  })
+  
   
 }  
   
