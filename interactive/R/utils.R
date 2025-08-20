@@ -79,6 +79,25 @@ load_uq_data <- function(files, label_lookup) {
     dplyr::left_join(label_lookup, by = c("file_name" = "file_id"))
 }
 
+#--------helper function to add a mode to cycles for UQ plot--------------------
+read_uq <- function(files, lookup, mode = c("charge","discharge"), cycle) {
+  mode <- match.arg(mode)
+  # pick files for this cycle + mode from their names
+  sel <- grep(sprintf("cycle%s-%s", cycle, mode), files, ignore.case = TRUE)
+  if (!length(sel)) return(dplyr::tibble())
+  
+  out <- lapply(files[sel], function(fp){
+    id <- tools::file_path_sans_ext(basename(fp))
+    df <- readr::read_csv(fp, show_col_types = FALSE) |> janitor::clean_names()
+    df$file_name <- id
+    df
+  }) |> dplyr::bind_rows()
+  
+  out |>
+    dplyr::left_join(lookup, by = c("file_name" = "file_id")) |>
+    dplyr::mutate(mode = mode)
+}
+
 
 #---------------------------- Summaries ----------------------------------------
 # One row per file: terminal/max capacity and CE per cycle
@@ -147,24 +166,71 @@ plot_ce <- function(ce_tbl, palette, title_prefix = "CE") {
     theme(legend.position = "bottom", legend.title = element_text(face = "bold"))
 }
 
-plot_q_vs_cycle <- function(ce_tbl, palette, title_prefix = "Capacity per Cycle") {
-  ce_tbl %>%
-    select(label, cycle, Q_charge, Q_discharge) %>%
-    pivot_longer(c(Q_charge, Q_discharge), names_to = "type", values_to = "Q") %>%
-    mutate(type = factor(type, c("Q_charge","Q_discharge"), c("Charge","Discharge")),
-           label = factor(label, levels = names(palette))) %>%
-    ggplot(aes(factor(cycle), Q, color = label, linetype = type, group = interaction(label, type))) +
-    geom_line(linewidth = 0.7) + geom_point(size = 2) +
+# plot_q_vs_cycle <- function(ce_tbl, palette, title_prefix = "Capacity per Cycle") {
+#   ce_tbl %>%
+#     select(label, cycle, Q_charge, Q_discharge) %>%
+#     pivot_longer(c(Q_charge, Q_discharge), names_to = "type", values_to = "Q") %>%
+#     mutate(type = factor(type, c("Q_charge","Q_discharge"), c("Charge","Discharge")),
+#            label = factor(label, levels = names(palette))) %>%
+#     ggplot(aes(factor(cycle), Q, color = label, linetype = type, group = interaction(label, type))) +
+#     geom_line(linewidth = 0.7) + geom_point(size = 2) +
+#     scale_color_manual(values = palette, drop = FALSE) +
+#     scale_linetype_manual(values = c("solid", "dashed")) +
+#     labs(title = title_prefix, x = "Cycle", y = "Q [Ah]", color = "Cell", linetype = "Mode") +
+#     theme_minimal(base_size = 12) +
+#     guides(linetype = guide_legend(order = 1, nrow = 1, byrow = TRUE,
+#                                    override.aes = list(color = "grey20", linewidth = 1.1)),
+#            color    = guide_legend(order = 2, ncol = pmin(6, length(palette)),
+#                                    override.aes = list(size = 3.4))) +
+#     theme(legend.position = "bottom", legend.box = "vertical", legend.title = element_text(face = "bold"))
+# }
+
+plot_q_vs_cycle <- function(ce_tbl, palette,
+                            title_prefix = "Capacity per Cycle",
+                            show = c("both","charge","discharge")) {
+  
+  show <- match.arg(show)
+  
+  base <- ce_tbl %>%
+    dplyr::select(label, cycle, Q_charge, Q_discharge) %>%
+    dplyr::mutate(label = factor(label, levels = names(palette)))
+  
+  if (show == "both") {
+    long <- base %>%
+      tidyr::pivot_longer(c(Q_charge, Q_discharge),
+                          names_to = "type", values_to = "Q") %>%
+      dplyr::mutate(type = factor(type, c("Q_charge","Q_discharge"),
+                                  c("Charge","Discharge")))
+    p <- ggplot(long,
+                aes(x = factor(cycle), y = Q, color = label,
+                    linetype = type, group = interaction(label, type))) +
+      geom_line(linewidth = 0.7) + geom_point(size = 2) +
+      scale_linetype_manual(values = c("solid","dashed")) +
+      guides(linetype = guide_legend(order = 1, nrow = 1, byrow = TRUE,
+                                     override.aes = list(color = "grey20", linewidth = 1.1)),
+             color    = guide_legend(order = 2, ncol = pmin(6, length(palette)),
+                                     override.aes = list(size = 3.4)))
+  } else {
+    ycol <- if (show == "charge") "Q_charge" else "Q_discharge"
+    label_mode <- if (show == "charge") "Charge" else "Discharge"
+    dat <- base %>% dplyr::transmute(label, cycle, Q = .data[[ycol]])
+    
+    p <- ggplot(dat, aes(x = factor(cycle), y = Q, color = label, group = label)) +
+      geom_line(linewidth = 0.7) + geom_point(size = 2) +
+      guides(color = guide_legend(ncol = pmin(6, length(palette)),
+                                  override.aes = list(size = 3.4))) +
+      labs(subtitle = label_mode)
+  }
+  
+  p +
     scale_color_manual(values = palette, drop = FALSE) +
-    scale_linetype_manual(values = c("solid", "dashed")) +
-    labs(title = title_prefix, x = "Cycle", y = "Q [Ah]", color = "Cell", linetype = "Mode") +
+    labs(title = title_prefix, x = "Cycle", y = "Q [Ah]", color = "Cell") +
     theme_minimal(base_size = 12) +
-    guides(linetype = guide_legend(order = 1, nrow = 1, byrow = TRUE,
-                                   override.aes = list(color = "grey20", linewidth = 1.1)),
-           color    = guide_legend(order = 2, ncol = pmin(6, length(palette)),
-                                   override.aes = list(size = 3.4))) +
-    theme(legend.position = "bottom", legend.box = "vertical", legend.title = element_text(face = "bold"))
+    theme(legend.position = "bottom",
+          legend.box = "vertical",
+          legend.title = element_text(face = "bold"))
 }
+
 
 plot_q_vs_volume <- function(ce_tbl, palette, fit = c("loess","gam","poly2","mm","none")) {
   fit <- match.arg(fit)
