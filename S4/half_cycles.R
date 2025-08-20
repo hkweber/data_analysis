@@ -13,8 +13,10 @@ library(scales)
 library(gt)
 library(magick)
 
+
 # --- Data files ---
-setwd("B:/Export/TROMBAT/series 4/modified_data")
+setwd(tbutils::get_env_dir("TROMBAT_DATA_SERIES4"))
+
 files <- list.files(pattern = "\\.csv$")
 stopifnot(length(files) > 0)
 
@@ -171,7 +173,8 @@ final_plot <- wrap_plots(row_plots, ncol = 1) +
 final_plot
 
 # --- Export paths & common settings ---
-out_dir <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results/plots/series_04/"
+out_dir <- tbutils::get_env_dir("TROMBAT_OUTPUT_RESULTS")
+
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 w <- 12; h <- 14
 

@@ -9,6 +9,7 @@ suppressPackageStartupMessages({
   library(RColorBrewer); library(scales); library(gt)
 })
 
+
 #---------------------------- Palette helpers ----------------------------------
 # Up to 16 colorblind-friendly colors (Dark2 + Set1 fallback)
 build_palette <- function(labels) {

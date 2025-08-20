@@ -1,0 +1,11 @@
+Package: tbutils
+Title: TROMBAT Utility Functions
+Version: 0.0.1
+Authors@R: person(given = "Your", family = "Name", email = "you@example.com", role = c("aut","cre"))
+Description: Small internal helpers for the TROMBAT analysis project. Currently
+provides get_env_dir() to read normalized paths from environment variables.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends: R (>= 4.1)

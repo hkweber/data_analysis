@@ -1,0 +1,4 @@
+- 2025-08-25 Hard coded drive letters replaced by Renviron, which is untracked, for github i added tools/.Renviron.example
+- 2025-08-25 added get_env_path helper function to extract paths from Renviron to utils.R
+- 2025-08-25 now using here package: added .here file to set "C:/trombat/R/data_analysis" as starting directory, useage: here::here()
+- 2025-08-25 now using a R package tbutils that contains helper functions like get_env_path
