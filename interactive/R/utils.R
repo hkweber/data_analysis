@@ -9,6 +9,65 @@ suppressPackageStartupMessages({
   library(RColorBrewer); library(scales); library(gt)
 })
 
+# ── Lightweight in-memory cache for per-series data ───────────────────────────
+.tb_cache <- new.env(parent = emptyenv())
+
+# Needs: install.packages("digest")
+.cache_key_series <- function(dir) {
+  fs <- list.files(dir, pattern = "\\.csv$", full.names = TRUE)
+  sig <- if (!length(fs)) "empty" else {
+    finfo <- file.info(fs)
+    paste(basename(fs), as.integer(finfo$mtime), collapse = "|")
+  }
+  paste(basename(dir), digest::digest(sig, algo = "xxhash64"), sep = "||")
+}
+
+
+# Cached loader: returns list(uq, ce, files, lookup, series)
+load_series_data <- function(series_name, cfg, refresh_token = NULL) {
+  key <- paste("SER", series_name, .cache_key_series(cfg$dir), refresh_token, sep = "||")
+  if (exists(key, envir = .tb_cache, inherits = FALSE)) {
+    return(get(key, envir = .tb_cache, inherits = FALSE))
+  }
+  files <- list.files(cfg$dir, pattern = "\\.csv$", full.names = TRUE)
+  stopifnot(length(files) > 0)
+  
+  lookup <- build_label_lookup(files, volumes = cfg$volumes, sep_to_tb = cfg$sep_to_tb)
+  uq  <- load_uq_data(files, lookup) %>% dplyr::mutate(series = series_name)
+  ce  <- summarise_Q(uq)           %>% dplyr::mutate(series = series_name)
+  
+  out <- list(uq = uq, ce = ce, files = files, lookup = lookup, series = series_name)
+  assign(key, out, envir = .tb_cache)
+  out
+}
+
+
+# ── Deterministic thinning for huge U–Q scatters (keeps shape) ────────────────
+thin_points <- function(df, max_points = 30000,
+                        group_cols = c("series","label","cycle","mode"),
+                        xcol = "qx") {
+  n <- nrow(df)
+  if (!n || n <= max_points) return(df)
+  k <- ceiling(n / max_points)
+  df %>%
+    dplyr::group_by(dplyr::across(all_of(group_cols))) %>%
+    dplyr::arrange(.data[[xcol]], .by_group = TRUE) %>%
+    dplyr::mutate(.row_id = dplyr::row_number()) %>%
+    dplyr::filter(.row_id %% k == 1) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-.row_id)
+}
+
+# ── Force ggplotly to use WebGL (scattergl) for all scatter traces ────────────
+force_scattergl <- function(p) {
+  if (!inherits(p, "plotly")) return(p)
+  for (i in seq_along(p$x$data)) {
+    if (identical(p$x$data[[i]]$type, "scatter")) p$x$data[[i]]$type <- "scattergl"
+  }
+  p
+}
+
+
 
 #---------------------------- Palette helpers ----------------------------------
 # Up to 16 colorblind-friendly colors (Dark2 + Set1 fallback)

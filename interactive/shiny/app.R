@@ -56,6 +56,7 @@ ui <- fluidPage(
         )
       ),
       actionButton("refresh", "Refresh data", class = "btn-primary"),
+      actionButton("clear_cache", "Clear cache", class = "btn-warning", style = "margin-left: 6px;"),
       hr(),
       # Cells + Cycles built dynamically from selected series
       uiOutput("cell_ui"),
@@ -81,7 +82,8 @@ ui <- fluidPage(
           choices  = c("All in one" = "single", "Facet by cycle" = "facet"),
           selected = "single",
           inline   = TRUE
-        )
+        ),
+        checkboxInput("qv_smooth", "Show smoother", value = FALSE)
       ),
       conditionalPanel(
         condition = "input.tabs === 'U–Q'",
@@ -97,6 +99,10 @@ ui <- fluidPage(
           selected = "facet",
           inline   = TRUE
         )
+      ),
+      conditionalPanel(
+        condition = "input.show_uq",
+        checkboxInput("uq_precision", "High precision (no downsampling)", value = FALSE)
       ),
       checkboxInput("show_uq", "Show U–Q tab", value = FALSE),
       width = 3
@@ -116,21 +122,31 @@ ui <- fluidPage(
 # ── Server ───────────────────────────────────────────────────────────────────
 server <- function(input, output, session){
   
+  # bump to force reloads when we clear cache
+  cache_bump <- reactiveVal(0L)
+  
+  observeEvent(input$clear_cache, {
+    n <- 0L
+    if (exists(".tb_cache", inherits = TRUE)) {
+      n <- length(ls(envir = .tb_cache))
+      try(rm(list = ls(envir = .tb_cache), envir = .tb_cache), silent = TRUE)
+    }
+    cache_bump(cache_bump() + 1L)   # trigger re-load
+    showNotification(
+      sprintf("Cleared cache (%d item%s) and reloaded.", n, ifelse(n == 1, "", "s")),
+      type = "message"
+    )
+  })
+  
   # Load / merge all selected series on refresh or series change
-  data_r <- eventReactive(list(input$refresh, input$series), ignoreInit = FALSE, {
+  data_r <- eventReactive(list(input$refresh, input$series, cache_bump()), ignoreInit = FALSE, {
     req(length(input$series) >= 1)
     
-    # Read each selected series and bind with a 'series' column
-    parts <- lapply(input$series, function(sname){
+    parts <- lapply(input$series, function(sname) {
       cfg <- series_cfg[[sname]]
-      files <- list.files(cfg$dir, pattern = "\\.csv$", full.names = TRUE)
-      validate(need(length(files) > 0, paste("No CSV files in", cfg$dir)))
-      
-      lookup <- build_label_lookup(files, volumes = cfg$volumes, sep_to_tb = cfg$sep_to_tb)
-      uq     <- load_uq_data(files, lookup) %>% mutate(series = sname)
-      ce     <- summarise_Q(uq) %>% mutate(series = sname)
-      
-      list(uq = uq, ce = ce, files = files, lookup = lookup, series = sname)
+      # combine refresh click + cache bump into a token that invalidates the cache key
+      load_series_data(series_name = sname, cfg = cfg,
+                       refresh_token = paste(input$refresh, cache_bump()))
     })
     
     uq_all <- bind_rows(lapply(parts, `[[`, "uq"))
@@ -256,119 +272,8 @@ server <- function(input, output, session){
     ggplotly(p, tooltip = c("series","label","type","cycle","Q")) %>% toWebGL()
   })
   
-#   # --- Q vs Volume (switch Y between Q_discharge / Q_charge) ---
-#   output$p_qv <- renderPlotly({
-#     req(data_r(), length(input$cells))
-#     
-#     yvar <- if (shiny::isTruthy(input$qv_y)) input$qv_y else "Q_discharge"
-#     
-#     d <- data_r()$ce %>%
-#       dplyr::mutate(
-#         cell_key = paste(series, label, sep = "||"),
-#         vol_ml   = parse_vol_ml(label)
-#       ) %>%
-#       dplyr::filter(
-#         cell_key %in% input$cells,
-#         cycle %in% cycles_sel(),
-#         is.finite(vol_ml),
-#         is.finite(.data[[yvar]])
-#       )
-#     
-#     req(nrow(d) > 0)
-#     
-#     p <- ggplot(d, aes(x = vol_ml, y = !!rlang::sym(yvar), color = label, shape = series)) +
-#       geom_point() +
-#       geom_smooth(
-#         aes(x = vol_ml, y = !!rlang::sym(yvar)),
-#         method = "gam", formula = y ~ s(x, k = 5), se = FALSE, color = "grey30",
-#         inherit.aes = FALSE
-#       ) +
-#       scale_color_manual(values = data_r()$cols) +
-#       labs(
-#         x = "Electrolyte volume [mL]",
-#         y = paste0(yvar, " [Ah]"),
-#         color = "Cell", shape = "Series"
-#       ) +
-#       theme_minimal()
-#     
-#     # Facet if requested
-#     if (identical(input$qv_layout, "facet")) {
-#       p <- p + facet_wrap(~ cycle)
-#     }
-#     
-#     ggplotly(p, tooltip = c("series", "label", "cycle", "vol_ml", yvar)) %>% toWebGL()
-#   })
-#   
-# 
-#   # ── U–Q (built on demand) ──────────────────────────────────────────────────
-#   output$p_uq <- renderPlotly({
-#     req(input$show_uq)
-#     
-#     cycs <- sort(unique(as.integer(input$cycles)))
-#     req(length(cycs) > 0)
-#     
-#     # Build per selected series
-#     parts <- lapply(input$series, function(sname){
-#       cfg <- series_cfg[[sname]]
-#       files <- list.files(cfg$dir, pattern = "\\.csv$", full.names = TRUE)
-#       lookup <- build_label_lookup(files, volumes = cfg$volumes, sep_to_tb = cfg$sep_to_tb)
-#       list(series = sname, files = files, lookup = lookup)
-#     })
-#     
-#     # read charge + discharge for each requested cycle
-#     uq <- lapply(parts, function(prt){
-#       dplyr::bind_rows(lapply(cycs, function(cy){
-#         dplyr::bind_rows(
-#           read_uq(prt$files, prt$lookup, mode = "charge",    cycle = cy),
-#           read_uq(prt$files, prt$lookup, mode = "discharge", cycle = cy)
-#         ) |>
-#           dplyr::mutate(series = prt$series, cycle = cy)
-#       }))
-#     }) |> dplyr::bind_rows()
-#     
-#     # keep only selected cells (picker key is "Series X||Label")
-#     uq <- uq |>
-#       dplyr::mutate(cell_key = paste(series, label, sep = "||")) |>
-#       dplyr::filter(cell_key %in% input$cells)
-#     
-#     # respect U–Q mode radio
-#     mode_pick <- input$uq_mode %||% "Discharge"
-#     if (mode_pick == "Charge")     uq <- dplyr::filter(uq, mode == "charge")
-#     if (mode_pick == "Discharge")  uq <- dplyr::filter(uq, mode == "discharge")
-#     
-#     # choose the correct Q column strictly by mode
-#     uq <- uq |>
-#       dplyr::mutate(
-#         qx = dplyr::if_else(mode == "charge", ah_cyc_charge_0, ah_cyc_discharge_0)
-#       ) |>
-#       dplyr::filter(is.finite(qx), is.finite(u_v))
-#     
-#     mode_sel <- (input$uq_mode %||% "Both")
-#     if (mode_sel != "Both") {
-#       uq <- dplyr::filter(uq, mode == tolower(mode_sel))
-#     }
-#     
-#     validate(need(nrow(uq) > 0, "No U–Q data for current selection."))
-#     
-#     p <- ggplot(uq, aes(x = qx, y = u_v, color = label,
-#                         text = paste("Series:", series,
-#                                      "<br>Cycle:", cycle,
-#                                      "<br>Mode:", mode))) +
-#       geom_point(size = 0.8, alpha = 0.9) +
-#       scale_color_manual(values = data_r()$cols) +
-#       labs(x = "Q [Ah]", y = "Voltage [V]", color = "Cell") +
-#       theme_minimal() +
-#       facet_wrap(~ cycle)
-#     
-#     if (identical(input$uq_layout, "facet")) {
-#       p <- p + facet_wrap(~ cycle)
-#       # (single layout just overlays all selected cycles in one panel)
-#     }
-#     
-#     ggplotly(p, tooltip = c("label","text","u_v")) %>% toWebGL()
-#   })
-#   
-# }
+  # --- Q vs Volume (switch Y between Q_discharge / Q_charge) ---
+
   output$p_qv <- renderPlotly({
     req(data_r(), length(input$cells), input$qv_layout)
     yvar <- input$qv_y %||% "Q_discharge"
@@ -383,11 +288,18 @@ server <- function(input, output, session){
     
     req(nrow(d) > 0)
     
-    p <- ggplot(d, aes(vol_ml, !!rlang::sym(yvar), color = label, shape = series)) +
-      geom_point() +
-      geom_smooth(aes(vol_ml, !!rlang::sym(yvar)),
-                  method = "gam", formula = y ~ s(x, k = 5),
-                  se = FALSE, color = "grey30", inherit.aes = FALSE) +
+    p <- ggplot(d, aes(x = vol_ml, y = !!rlang::sym(yvar), color = label, shape = series)) +
+      geom_point()
+    
+    if (isTRUE(input$qv_smooth)) {
+      p <- p + geom_smooth(
+        aes(x = vol_ml, y = !!rlang::sym(yvar)),
+        method = "gam", formula = y ~ s(x, k = 5), se = FALSE, color = "grey30",
+        inherit.aes = FALSE
+      )
+    }
+    
+    p <- p +
       scale_color_manual(values = data_r()$cols) +
       labs(x = "Electrolyte volume [mL]", y = paste0(yvar, " [Ah]"),
            color = "Cell", shape = "Series") +
@@ -397,8 +309,70 @@ server <- function(input, output, session){
       p <- p + facet_wrap(~ cycle)
     }
     
-    ggplotly(p, tooltip = c("series","label","cycle","vol_ml", yvar)) %>% toWebGL()
+    ggplotly(p, tooltip = c("series", "label", "cycle", "vol_ml", yvar)) %>% toWebGL()
+    
   })
+  # --- U–Q (mode + layout + downsampling + WebGL) ---
+  output$p_uq <- renderPlotly({
+    req(input$show_uq, data_r(), length(input$cells), input$uq_mode, input$uq_layout)
+    
+    # start from raw U–Q rows already loaded for all series
+    d <- data_r()$uq %>%
+      dplyr::mutate(cell_key = paste(series, label, sep = "||")) %>%
+      dplyr::filter(cell_key %in% input$cells,
+                    cycle %in% cycles_sel())
+    
+    # build charge / discharge with correct Q-axis
+    d_charge <- d %>%
+      dplyr::filter(mode == "charge") %>%
+      dplyr::transmute(series, label, cycle, mode = "charge",
+                       qx = ah_cyc_charge_0, u_v)
+    
+    d_dis    <- d %>%
+      dplyr::filter(mode == "discharge") %>%
+      dplyr::transmute(series, label, cycle, mode = "discharge",
+                       qx = ah_cyc_discharge_0, u_v)
+    
+    df <- switch(input$uq_mode %||% "both",
+                 charge    = d_charge,
+                 discharge = d_dis,
+                 both      = dplyr::bind_rows(d_charge, d_dis))
+    
+    # drop bad rows
+    df <- dplyr::filter(df, is.finite(qx), is.finite(u_v))
+    req(nrow(df) > 0)
+    
+    # downsample (unless high precision)
+    max_pts <- if (isTRUE(input$uq_precision)) Inf else 30000
+    df <- thin_points(df, max_points = max_pts,
+                      group_cols = c("series","label","cycle","mode"),
+                      xcol = "qx")
+    
+    p <- ggplot(df, aes(
+      x = qx, y = u_v, color = label, shape = series,
+      text = paste0(
+        "Series: ", series,
+        "<br>Cell: ", label,
+        "<br>Cycle: ", cycle,
+        "<br>Mode: ", mode,
+        "<br>Q: ", signif(qx, 4), " Ah",
+        "<br>U: ", signif(u_v, 4), " V"
+      )
+    )) +
+      geom_point(size = 0.6, alpha = 0.9) +
+      scale_color_manual(values = data_r()$cols) +
+      labs(x = "Q [Ah]", y = "Voltage [V]", color = "Cell", shape = "Series") +
+      theme_minimal()
+    
+    if (identical(input$uq_layout, "facet")) {
+      p <- p + facet_wrap(~ cycle)
+    }
+    
+    pl <- ggplotly(p, tooltip = "text")
+    pl <- force_scattergl(pl)  # ensure scattergl traces
+    pl %>% toWebGL()
+  })
+  
 }  
   
 
