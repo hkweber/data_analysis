@@ -1,0 +1,2 @@
+- develop diff function, that shows the differences in meta_data between individual cells
+  "if cells behave differently this should answer the question, are there differences between them?"

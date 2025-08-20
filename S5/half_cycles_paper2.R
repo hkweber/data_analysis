@@ -2,9 +2,13 @@
 library(dplyr); library(ggplot2); library(stringr); library(janitor)
 library(patchwork); library(RColorBrewer); library(readr); library(grid)
 
+
+
 w <- 12; h <- 14
 pdf_dev <- if (capabilities("cairo")) grDevices::cairo_pdf else grDevices::pdf
-out_dir_s5 <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results/plots/series_05"  # set full path here
+
+out_dir_s5 <- tbutils::get_env_dir("TROMBAT_OUTPUT_TEMP_RESULTS")  # set full path here
+
 if (!dir.exists(out_dir_s5)) dir.create(out_dir_s5, recursive = TRUE)
 
 
@@ -14,7 +18,9 @@ if (!dir.exists(out_dir_s5)) dir.create(out_dir_s5, recursive = TRUE)
 # =====================
 
 # --- Point to Series 5 folder and list files ---
-series5_dir <- "B:/Export/TROMBAT/series 5/modified_data"  # adjust if needed
+
+
+series5_dir <- tbutils::get_env_dir("TROMBAT_DATA_SERIES5")
 stopifnot(dir.exists(series5_dir))
 files_s5_full <- list.files(series5_dir, pattern = "\\.csv$", full.names = TRUE)
 files_s5      <- basename(files_s5_full)

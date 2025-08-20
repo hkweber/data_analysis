@@ -7,13 +7,13 @@
 source("R/utils.R")
 
 # Base output folder
-root_out <- "T:/1_TZE_Forschung/2_Energiespeicher_Pettinger/3_Projekte/20064_TromBat/25 Datenauswertung/results_interactive"
+root_out <- tbutils::get_env_dir("TROMBAT_OUTPUT_TEMP_RESULTS")
 if (!dir.exists(root_out)) dir.create(root_out, recursive = TRUE)
 
 # Series-specific configuration (folders + volumes + Sep → TB mapping)
 series_cfg <- list(
   `4` = list(
-    dir = "B:/Export/TROMBAT/series 4/modified_data",
+    dir = tbutils::get_env_dir("TROMBAT_DATA_SERIES4"),
     sep_to_tb = c("Sep_01"="34","Sep_02"="35","Sep_03"="36"),
     volumes = c(
       "34"="1,72 mL","35"="1,91 mL","36"="2,1 mL",
@@ -23,7 +23,7 @@ series_cfg <- list(
     )
   ),
   `5` = list(
-    dir = "B:/Export/TROMBAT/series 5/modified_data",
+    dir = tbutils::get_env_dir("TROMBAT_DATA_SERIES4"),
     sep_to_tb = c("Sep_01"="37","Sep_02"="38","Sep_03"="39"),
     volumes = c(
       "37"="2,21 mL","38"="2,45 mL","39"="2,695 mL",

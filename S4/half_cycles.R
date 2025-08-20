@@ -173,7 +173,7 @@ final_plot <- wrap_plots(row_plots, ncol = 1) +
 final_plot
 
 # --- Export paths & common settings ---
-out_dir <- tbutils::get_env_dir("TROMBAT_OUTPUT_RESULTS")
+out_dir <- tbutils::get_env_dir("TROMBAT_OUTPUT_TEMP_RESULTS")
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 w <- 12; h <- 14
