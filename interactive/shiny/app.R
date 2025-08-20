@@ -5,15 +5,15 @@
 
 suppressPackageStartupMessages({
   library(shiny); library(dplyr); library(ggplot2); library(plotly)
-  library(scales); library(tidyr); library(stringr)
+  library(scales); library(tidyr); library(stringr); library(shinyWidgets)
 })
 
-source("../R/utils.R")   # 🟨 CHANGED: use utils.R
+source(here::here("interactive", "R", "utils.R"))   # 🟨 CHANGED: use utils.R
 
 # 🟨 NEW: per-series config (dir + volumes + Sep→TB)
 series_cfg <- list(
   "Series 4" = list(
-    dir = "B:/Export/TROMBAT/series 4/modified_data",
+    dir = tbutils::get_env_dir("TROMBAT_DATA_SERIES4"),
     sep_to_tb = c("Sep_01"="34","Sep_02"="35","Sep_03"="36"),
     volumes = c(
       "34"="1,72 mL","35"="1,91 mL","36"="2,1 mL",
@@ -23,7 +23,7 @@ series_cfg <- list(
     )
   ),
   "Series 5" = list(
-    dir = "B:/Export/TROMBAT/series 5/modified_data",
+    dir = tbutils::get_env_dir("TROMBAT_DATA_SERIES5"),
     sep_to_tb = c("Sep_01"="37","Sep_02"="38","Sep_03"="39"),
     volumes = c(
       "37"="2,21 mL","38"="2,45 mL","39"="2,695 mL",
@@ -46,7 +46,19 @@ ui <- fluidPage(
       actionButton("refresh", "Refresh data", class = "btn-primary"),
       hr(),
       uiOutput("cell_ui"),
-      sliderInput("cyc", "Cycles", min = 1, max = 3, value = c(1,3), step = 1),
+      pickerInput(
+        inputId  = "cyc",
+        label    = "Cycles",
+        choices  = NULL,        # filled dynamically
+        selected = NULL,        # filled dynamically
+        multiple = TRUE,
+        options  = list(
+          `actionsBox` = TRUE,  # Select all / Deselect all
+          `liveSearch` = TRUE,  # type-to-filter
+          size = 10,
+          dropupAuto = FALSE
+        )
+      ),
       checkboxInput("show_uq", "Show U–Q tab", value = FALSE),
       width = 3
     ),
@@ -78,22 +90,47 @@ server <- function(input, output, session){
     cols <- build_palette(sort(unique(na.omit(ce$label))))                 # 🟨 CHANGED
     
     cycles <- sort(unique(na.omit(ce$cycle)))
-    updateSliderInput(session, "cyc",
-                      min = min(cycles), max = max(cycles),
-                      value = c(min(cycles), max(cycles)))
+    updatePickerInput(
+      session, "cyc",
+      choices  = cycles,
+      selected = cycles
+    )
+    
     
     list(files = files, lookup = lookup, uq = uq, ce = ce, cols = cols, cycles = cycles)
   })
   
+  # output$cell_ui <- renderUI({
+  #   labs <- sort(unique(na.omit(data_r()$ce$label)))
+  #   checkboxGroupInput("cells", "Cells", choices = labs, selected = labs)
+  # })
   output$cell_ui <- renderUI({
+    # cells are already pre-filtered by input$series via data_r()
     labs <- sort(unique(na.omit(data_r()$ce$label)))
-    checkboxGroupInput("cells", "Cells", choices = labs, selected = labs)
+    
+    shinyWidgets::pickerInput(
+      inputId  = "cells",
+      label    = "Cells",
+      choices  = labs,
+      selected = labs,              # select-all by default
+      multiple = TRUE,
+      width    = "100%",
+      options  = shinyWidgets::pickerOptions(
+        actionsBox          = TRUE,    # Select all / Deselect all buttons
+        liveSearch          = TRUE,    # type to search
+        liveSearchNormalize = TRUE,    # ignore accents / case
+        virtualScroll       = 400,     # smooth with many items
+        selectedTextFormat  = "count > 2", # e.g. "23 selected"
+        noneSelectedText    = "Select cells..."
+      )
+    )
   })
+  
   
   output$p_ce <- renderPlotly({
     d <- data_r()$ce %>%
       filter(label %in% input$cells,
-             cycle >= input$cyc[1], cycle <= input$cyc[2])
+             cycle %in% input$cyc)
     p <- ggplot(d, aes(factor(cycle), CE, color = label, group = label)) +
       geom_line() + geom_point() +
       scale_color_manual(values = data_r()$cols) +
