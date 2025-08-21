@@ -139,40 +139,57 @@ server <- function(input, output, session){
     )
   })
   
-  # Load / merge all selected series on refresh or series change
+  # --- Load / merge all selected series on refresh or series change -----------
   data_r <- eventReactive(list(input$refresh, input$series, cache_bump()), ignoreInit = FALSE, {
     req(length(input$series) >= 1)
     
     parts <- lapply(input$series, function(sname) {
       cfg <- series_cfg[[sname]]
-      # combine refresh click + cache bump into a token that invalidates the cache key
-      load_series_data(series_name = sname, cfg = cfg,
-                       refresh_token = paste(input$refresh, cache_bump()))
+      load_series_data(
+        series_name   = sname,
+        cfg           = cfg,
+        refresh_token = paste(input$refresh, cache_bump())
+      )
     })
     
-    uq_all <- bind_rows(lapply(parts, `[[`, "uq"))
-    ce_all <- bind_rows(lapply(parts, `[[`, "ce"))
+    uq_all <- dplyr::bind_rows(lapply(parts, `[[`, "uq"))
+    ce_all <- dplyr::bind_rows(lapply(parts, `[[`, "ce"))
     
-    # Cells list grouped by series (for picker)
+    # cells list grouped by series (for picker)
     labs_df <- ce_all %>%
-      distinct(series, label) %>%
-      arrange(series, label) %>%
-      mutate(cell_key = paste(series, label, sep = "||"))
+      dplyr::distinct(series, label) %>%
+      dplyr::arrange(series, label) %>%
+      dplyr::mutate(cell_key = paste(series, label, sep = "||"))
     
-    # Build grouped choices: list("Series 4" = c("TB34, 1,72 mL" = "Series 4||TB34, 1,72 mL"), ...)
+    # union of cycles across selected series
+    cycles <- sort(unique(stats::na.omit(ce_all$cycle)))
+    
+    # palette by label
+    cols <- build_palette(sort(unique(stats::na.omit(ce_all$label))))
+    
+    # optional metadata (won't crash if missing)
+    meta <- tryCatch(
+      load_cells_meta(),                 # <-- no hard-coded path; uses TROMBAT_CELLS_META
+      error = function(e) { message("⚠️ cells_meta not loaded: ", conditionMessage(e)); NULL }
+    )
+    if (!is.null(meta)) {
+      showNotification(sprintf("Loaded cells_meta (%d sheets)", length(meta)), type = "message")
+    }
+    
+    
+    list(uq = uq_all, ce = ce_all, cols = cols, cycles = cycles, labs = labs_df, meta = meta)
+  })
+  
+  # --- Dynamic UI (cells & cycles pickers) ------------------------------------
+  observeEvent(data_r(), {
+    labs_df <- data_r()$labs
+    cycles  <- data_r()$cycles
     choices_by_series <- split(setNames(labs_df$cell_key, labs_df$label), labs_df$series)
     
-    # Cycle choices (union across selected series)
-    cycles <- sort(unique(na.omit(ce_all$cycle)))
-    
-    # Colors keyed by label (keeps legend compact). OK across S4+S5 because labels differ.
-    cols <- build_palette(sort(unique(na.omit(ce_all$label))))
-    
-    # Update dependent UI
     output$cell_ui <- renderUI({
-      pickerInput(
+      shinyWidgets::pickerInput(
         "cells", "Cells",
-        choices = choices_by_series,
+        choices  = choices_by_series,
         selected = labs_df$cell_key,
         multiple = TRUE,
         options = list(
@@ -184,9 +201,9 @@ server <- function(input, output, session){
       )
     })
     output$cycle_ui <- renderUI({
-      pickerInput(
+      shinyWidgets::pickerInput(
         "cycles", "Cycles",
-        choices = cycles,
+        choices  = cycles,
         selected = cycles,
         multiple = TRUE,
         options = list(
@@ -195,159 +212,116 @@ server <- function(input, output, session){
         )
       )
     })
-    
-    list(uq = uq_all, ce = ce_all, cols = cols, cycles = cycles, labs = labs_df)
-  })
+  }, ignoreInit = FALSE)
   
-  # cycle select helper
+  # --- Safe selection helpers --------------------------------------------------
   cycles_sel <- reactive({
     req(data_r())
     x <- input$cycles
-    if (is.null(x) || !length(x)) return(data_r()$cycles)
-    x <- suppressWarnings(as.integer(x))
-    x <- x[is.finite(x)]
-    if (!length(x)) data_r()$cycles else sort(unique(x))
+    if (is.null(x) || !length(x)) data_r()$cycles else sort(unique(as.integer(x)))
+  })
+  cells_sel <- reactive({
+    req(data_r())
+    x <- input$cells
+    if (is.null(x) || !length(x)) data_r()$labs$cell_key else x
   })
   
-  
-  # ── CE vs Cycle ─────────────────────────────────────────────────────────────
+  # --- CE vs Cycle -------------------------------------------------------------
   output$p_ce <- renderPlotly({
     d <- data_r()$ce %>%
       mutate(cell_key = paste(series, label, sep = "||")) %>%
-      filter(cell_key %in% input$cells, cycle %in% input$cycles)
-    
+      filter(cell_key %in% cells_sel(),
+             cycle    %in% cycles_sel())
     req(nrow(d) > 0)
     
     p <- ggplot(d, aes(factor(cycle), CE, color = label, group = interaction(series, label))) +
       geom_line() + geom_point() +
       scale_color_manual(values = data_r()$cols) +
-      scale_y_continuous(labels = percent) +
-      labs(x = "Cycle", y = "CE", color = "Cell")
+      scale_y_continuous(labels = scales::percent) +
+      labs(x = "Cycle", y = "CE", color = "Cell") +
+      theme_minimal()
     
-    if (n_distinct(d$series) > 1) {
-      p <- p + facet_wrap(~ series, nrow = 1)
-    }
-    
-    p <- p + theme_minimal()
+    if (dplyr::n_distinct(d$series) > 1) p <- p + facet_wrap(~ series, nrow = 1)
     
     ggplotly(p, tooltip = c("series","label","cycle","y")) %>% toWebGL()
   })
   
-  # ── Q vs Cycle (Charge + Discharge) ────────────────────────────────────────
+  # --- Q vs Cycle --------------------------------------------------------------
   output$p_q <- renderPlotly({
-    req(data_r(), length(input$cells))
-    
-    # Make the same key the picker emits: "Series X||Label"
+    req(data_r(), length(cells_sel()))
     qlong <- data_r()$ce %>%
       mutate(cell_key = paste(series, label, sep = "||")) %>%
-      filter(cell_key %in% input$cells,
+      filter(cell_key %in% cells_sel(),
              cycle %in% cycles_sel()) %>%
-      pivot_longer(c(Q_charge, Q_discharge),
-                   names_to = "type", values_to = "Q") %>%
-      mutate(type = factor(type,
-                           c("Q_charge","Q_discharge"),
-                           c("Charge","Discharge")))
+      tidyr::pivot_longer(c(Q_charge, Q_discharge), names_to = "type", values_to = "Q") %>%
+      mutate(type = factor(type, c("Q_charge","Q_discharge"), c("Charge","Discharge")))
     
-    # Apply radio selection: Both / Charge / Discharge
     mode_sel <- if (shiny::isTruthy(input$qc_mode)) input$qc_mode else "Both"
-    if (mode_sel != "Both") {
-      qlong <- dplyr::filter(qlong, type == mode_sel)
-    }
-    
+    if (mode_sel != "Both") qlong <- dplyr::filter(qlong, type == mode_sel)
     validate(need(nrow(qlong) > 0, "No data for current selection."))
     
-    p <- ggplot(qlong, aes(x = factor(cycle), y = Q,
-                           color = label, linetype = type,
+    p <- ggplot(qlong, aes(factor(cycle), Q, color = label, linetype = type,
                            group = interaction(series, label, type))) +
       geom_line() + geom_point() +
       scale_color_manual(values = data_r()$cols) +
-      scale_linetype_manual(values = c("Charge" = "solid", "Discharge" = "dashed"),
-                            drop = FALSE) +
+      scale_linetype_manual(values = c("Charge" = "solid", "Discharge" = "dashed"), drop = FALSE) +
       labs(x = "Cycle", y = "Q [Ah]", color = "Cell", linetype = "Mode") +
       theme_minimal()
     
-    # Optional: facet when comparing multiple series
-    if (dplyr::n_distinct(qlong$series) > 1)
-      p <- p + facet_wrap(~ series, nrow = 1)
+    if (dplyr::n_distinct(qlong$series) > 1) p <- p + facet_wrap(~ series, nrow = 1)
     
     ggplotly(p, tooltip = c("series","label","type","cycle","Q")) %>% toWebGL()
   })
   
-  # --- Q vs Volume (switch Y between Q_discharge / Q_charge) ---
-
+  # --- Q vs Volume -------------------------------------------------------------
   output$p_qv <- renderPlotly({
-    req(data_r(), length(input$cells), input$qv_layout)
+    req(data_r(), length(cells_sel()), input$qv_layout)
     yvar <- input$qv_y %||% "Q_discharge"
     
     d <- data_r()$ce %>%
-      dplyr::mutate(cell_key = paste(series, label, sep = "||"),
-                    vol_ml   = parse_vol_ml(label)) %>%
-      dplyr::filter(cell_key %in% input$cells,
-                    cycle %in% cycles_sel(),
-                    is.finite(vol_ml),
-                    is.finite(.data[[yvar]]))
-    
+      mutate(cell_key = paste(series, label, sep = "||"),
+             vol_ml   = parse_vol_ml(label)) %>%
+      filter(cell_key %in% cells_sel(),
+             cycle %in% cycles_sel(),
+             is.finite(vol_ml),
+             is.finite(.data[[yvar]]))
     req(nrow(d) > 0)
     
-    p <- ggplot(d, aes(x = vol_ml, y = !!rlang::sym(yvar), color = label, shape = series)) +
-      geom_point()
-    
-    if (isTRUE(input$qv_smooth)) {
-      p <- p + geom_smooth(
-        aes(x = vol_ml, y = !!rlang::sym(yvar)),
-        method = "gam", formula = y ~ s(x, k = 5), se = FALSE, color = "grey30",
-        inherit.aes = FALSE
-      )
-    }
-    
-    p <- p +
+    p <- ggplot(d, aes(vol_ml, !!rlang::sym(yvar), color = label, shape = series)) +
+      geom_point() +
       scale_color_manual(values = data_r()$cols) +
-      labs(x = "Electrolyte volume [mL]", y = paste0(yvar, " [Ah]"),
-           color = "Cell", shape = "Series") +
+      labs(x = "Electrolyte volume [mL]", y = paste0(yvar, " [Ah]"), color = "Cell", shape = "Series") +
       theme_minimal()
     
-    if (identical(input$qv_layout, "facet")) {
-      p <- p + facet_wrap(~ cycle)
+    if (isTRUE(input$qv_smooth)) {
+      p <- p + geom_smooth(aes(vol_ml, !!rlang::sym(yvar)),
+                           method = "gam", formula = y ~ s(x, k = 5), se = FALSE,
+                           color = "grey30", inherit.aes = FALSE)
     }
+    if (identical(input$qv_layout, "facet")) p <- p + facet_wrap(~ cycle)
     
     ggplotly(p, tooltip = c("series", "label", "cycle", "vol_ml", yvar)) %>% toWebGL()
-    
   })
-  # --- U–Q (mode + layout + downsampling + WebGL) ---
+  
+  # --- U–Q ---------------------------------------------------------------------
   output$p_uq <- renderPlotly({
-    req(input$show_uq, data_r(), length(input$cells), input$uq_mode, input$uq_layout)
+    req(input$show_uq, data_r(), length(cells_sel()), input$uq_mode, input$uq_layout)
     
-    # start from raw U–Q rows already loaded for all series
     d <- data_r()$uq %>%
-      dplyr::mutate(cell_key = paste(series, label, sep = "||")) %>%
-      dplyr::filter(cell_key %in% input$cells,
-                    cycle %in% cycles_sel())
+      mutate(cell_key = paste(series, label, sep = "||")) %>%
+      filter(cell_key %in% cells_sel(), cycle %in% cycles_sel())
     
-    # build charge / discharge with correct Q-axis
-    d_charge <- d %>%
-      dplyr::filter(mode == "charge") %>%
-      dplyr::transmute(series, label, cycle, mode = "charge",
-                       qx = ah_cyc_charge_0, u_v)
-    
-    d_dis    <- d %>%
-      dplyr::filter(mode == "discharge") %>%
-      dplyr::transmute(series, label, cycle, mode = "discharge",
-                       qx = ah_cyc_discharge_0, u_v)
-    
+    d_charge <- d %>% filter(mode == "charge")    %>% transmute(series, label, cycle, mode = "charge",    qx = ah_cyc_charge_0,    u_v)
+    d_dis    <- d %>% filter(mode == "discharge") %>% transmute(series, label, cycle, mode = "discharge", qx = ah_cyc_discharge_0, u_v)
     df <- switch(input$uq_mode %||% "both",
                  charge    = d_charge,
                  discharge = d_dis,
-                 both      = dplyr::bind_rows(d_charge, d_dis))
-    
-    # drop bad rows
-    df <- dplyr::filter(df, is.finite(qx), is.finite(u_v))
+                 both      = dplyr::bind_rows(d_charge, d_dis)) %>%
+      filter(is.finite(qx), is.finite(u_v))
     req(nrow(df) > 0)
     
-    # downsample (unless high precision)
     max_pts <- if (isTRUE(input$uq_precision)) Inf else 30000
-    df <- thin_points(df, max_points = max_pts,
-                      group_cols = c("series","label","cycle","mode"),
-                      xcol = "qx")
+    df <- thin_points(df, max_points = max_pts, group_cols = c("series","label","cycle","mode"), xcol = "qx")
     
     p <- ggplot(df, aes(
       x = qx, y = u_v, color = label, shape = series,
@@ -365,26 +339,18 @@ server <- function(input, output, session){
       labs(x = "Q [Ah]", y = "Voltage [V]", color = "Cell", shape = "Series") +
       theme_minimal()
     
-    if (identical(input$uq_layout, "facet")) {
-      p <- p + facet_wrap(~ cycle)
-    }
+    if (identical(input$uq_layout, "facet")) p <- p + facet_wrap(~ cycle)
     
-    pl <- ggplotly(p, tooltip = "text")
-    pl <- force_scattergl(pl)  # ensure scattergl traces
-    pl %>% toWebGL()
+    force_scattergl(ggplotly(p, tooltip = "text")) %>% toWebGL()
   })
   
-  # ── table ─────────────────────────────────────────────────────────────
+  # --- Table -------------------------------------------------------------------
   output$tbl_ce <- DT::renderDT({
-    req(data_r(), input$cells)
-    
-    # Filter by current selections
+    req(data_r(), length(cells_sel()))
     df <- data_r()$ce %>%
       mutate(cell_key = paste(series, label, sep = "||")) %>%
-      filter(cell_key %in% input$cells,
-             cycle %in% cycles_sel()) %>%
+      filter(cell_key %in% cells_sel(), cycle %in% cycles_sel()) %>%
       arrange(series, label, cycle) %>%
-      # keep a simple, tidy set of columns
       transmute(
         Series = series,
         Cell   = label,
@@ -412,8 +378,8 @@ server <- function(input, output, session){
       DT::formatPercentage("CE", 1)
   })
   
-  
-}  
+}
+
   
 
 shinyApp(ui, server)

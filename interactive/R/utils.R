@@ -9,6 +9,56 @@ suppressPackageStartupMessages({
   library(RColorBrewer); library(scales); library(gt)
 })
 
+# --- Helpers to work with TB ids ------------------------------------------------
+extract_tb_num <- function(label) {
+  # pulls "34" from "TB34, 1,72 mL" (returns NA if not found)
+  stringr::str_match(label, "TB\\s*(\\d+)")[, 2]
+}
+
+# --- Read cells metadata from Excel (1 or many sheets) -------------------------
+# ---- Load cells meta from an environment variable (or explicit path) ----
+# Returns a named list of tibbles (one per sheet). We DON'T rbind sheets
+# to avoid type-mismatch problems across sheets.
+load_cells_meta <- function(path = NULL, sheets = NULL, quiet = TRUE, ...) {
+  if (!requireNamespace("readxl", quietly = TRUE)) {
+    stop("Package 'readxl' is required for cells_meta. Please install it.")
+  }
+  
+  # Default: use env var TROMBAT_CELLS_META
+  if (is.null(path) || !nzchar(path)) {
+    path <- Sys.getenv("TROMBAT_CELLS_META", unset = "")
+  }
+  if (!nzchar(path) || !file.exists(path)) {
+    stop("cells_meta file not found: ", if (nzchar(path)) path else "<empty TROMBAT_CELLS_META>")
+  }
+  
+  sh <- readxl::excel_sheets(path)
+  if (!is.null(sheets)) {
+    # allow numeric indices or names (partial/regex not applied here to keep simple)
+    if (is.numeric(sheets)) sheets <- sh[intersect(sheets, seq_along(sh))]
+    else sheets <- intersect(sh, sheets)
+  } else {
+    sheets <- sh
+  }
+  if (!length(sheets)) return(list())
+  
+  # read each sheet to a tibble and keep names
+  out <- stats::setNames(
+    lapply(sheets, function(s) {
+      # use clean_names to avoid "New names:" chatter; keep all columns as-is
+      tb <- readxl::read_excel(path, sheet = s, ...)
+      suppressWarnings(janitor::clean_names(tb))
+    }),
+    sheets
+  )
+  
+  if (!quiet) message("Loaded cells_meta from ", path, " (", length(out), " sheets).")
+  out
+}
+
+
+
+
 # ── Lightweight in-memory cache for per-series data ───────────────────────────
 .tb_cache <- new.env(parent = emptyenv())
 
